@@ -1,9 +1,13 @@
 {
-  "name": "notion-proxy-repo",
+  "name": "notion-proxy-live",
   "version": "1.0.0",
-  "description": "Proxy for Notion and Toggl API calls",
-  "main": "api/proxy.js",
+  "description": "Proxy for Notion and Toggl API access to resolve CORS issues.",
+  "main": "api/proxy/index.js",
+  "scripts": {
+    "start": "node api/proxy/index.js"
+  },
   "dependencies": {
-    "node-fetch": "2.6.7" 
+    "@notionhq/client": "^2.2.14",
+    "node-fetch": "^2.6.7"
   }
 }
