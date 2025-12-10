@@ -1,6 +1,0 @@
-{
-  "name": "notion-toggl-proxy",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "api/proxy.js"
-}
