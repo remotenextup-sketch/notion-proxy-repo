@@ -36,6 +36,8 @@ async function stopRunningTogglEntry(token) {
     if (currentEntry && currentEntry.id) {
         // 実行中のエントリがあれば停止APIを呼び出す
         const stopUrl = `https://api.track.toggl.com/api/v9/time_entries/${currentEntry.id}/stop`;
+        
+        // PATCHリクエストのbodyは空でOK (Toggl APIの仕様)
         await fetch(stopUrl, {
             method: 'PATCH',
             headers: {
@@ -53,25 +55,43 @@ async function stopRunningTogglEntry(token) {
 // =========================================================
 
 module.exports = async (req, res) => {
-    // ★★★ CORS設定を最も強力な形に強化 ★★★
+    // ★★★ 応答を返す前に、CORSヘッダーを確実に設定 ★★★
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PATCH');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Credentials', 'true'); // クレデンシャルを許可
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
 
     if (req.method === 'OPTIONS') {
         // プリフライトリクエストをここで正常終了させる
         return res.status(200).end();
     }
 
-    // リクエストボディのパース
+    // リクエストボディのパース (GETリクエストの場合は処理しない)
+    let body;
+    try {
+        if (req.method !== 'GET' && req.body) {
+             body = req.body;
+        } else if (req.method !== 'GET' && req.headers['content-type'] === 'application/json') {
+             // raw bodyをJSONとしてパース (vercel環境依存の対応)
+             body = JSON.parse(req.rawBody || await new Promise(resolve => {
+                let data = '';
+                req.on('data', chunk => data += chunk);
+                req.on('end', () => resolve(data));
+             }));
+        }
+    } catch (e) {
+         console.error('Body parsing error:', e);
+         return res.status(400).json({ message: 'Invalid JSON format in request body.' });
+    }
+
     const { 
-        targetUrl, method, body, tokenKey, tokenValue,
+        targetUrl, method, tokenKey, tokenValue,
         customEndpoint, dbId, dataSourceId, workspaceId, description
-    } = req.body;
+    } = body || {};
 
     // トークンが提供されていない場合のエラーハンドリング
     if (!tokenValue) {
+        // 401はCORSエラーを回避するために200で包む場合があるが、ここでは標準的な401を使用
         return res.status(401).json({ message: 'Token value missing in request body.' });
     }
 
@@ -160,9 +180,10 @@ module.exports = async (req, res) => {
                 const databaseId = dataSourceId; 
                 
                 const now = new Date();
+                // 30日前のISO日付文字列を取得
                 const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)).toISOString().split('T')[0];
                 
-                // 完了タスクを取得 (30日フィルターは適用せず、全件取得)
+                // 完了タスクを取得 (全件取得)
                 const response = await notion.databases.query({
                     database_id: databaseId,
                     filter: {
@@ -247,7 +268,9 @@ module.exports = async (req, res) => {
                 fetchOptions.headers['Notion-Version'] = notionVersion;
             }
 
+            // bodyが空でないことを確認
             if (method !== 'GET' && method !== 'HEAD' && body) {
+                // bodyオブジェクトがすでにパースされているため、JSON.stringify()で文字列化
                 fetchOptions.body = JSON.stringify(body);
             }
 
@@ -255,6 +278,7 @@ module.exports = async (req, res) => {
             
             const responseBody = await response.text();
             
+            // ヘッダーがすでに設定されているため、そのままステータスとボディを返す
             res.status(response.status).send(responseBody);
             
         } 
@@ -268,6 +292,7 @@ module.exports = async (req, res) => {
 
     } catch (error) {
         console.error('Proxy Error:', error);
+        // エラー時もCORSヘッダーを付けて返すことで、ブラウザ側の表示を改善
         return res.status(500).json({ message: 'Internal Server Error', details: error.message });
     }
 };
