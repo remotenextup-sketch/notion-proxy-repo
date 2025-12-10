@@ -11,7 +11,6 @@ const fetch = require('node-fetch');
  * @returns {Promise<object|null>} 停止されたエントリー、またはnull
  */
 async function stopRunningTogglEntry(token) {
-    // Basic認証ヘッダーを生成 (Toggl APIトークン:api_token)
     const authHeader = 'Basic ' + Buffer.from(`${token}:api_token`).toString('base64');
     const currentEntryUrl = 'https://api.track.toggl.com/api/v9/me/time_entries/current';
     
@@ -24,12 +23,10 @@ async function stopRunningTogglEntry(token) {
         }
     });
 
-    // 実行中のエントリがない場合（204 No Contentなど）は、そのままnullを返す
     if (currentEntryResponse.status === 204) {
         return null;
     }
     
-    // エラーレスポンスの場合
     if (!currentEntryResponse.ok) {
         throw new Error(`Toggl API error (GET /current): ${currentEntryResponse.statusText}`);
     }
@@ -96,7 +93,6 @@ module.exports = async (req, res) => {
                 const categories = properties['カテゴリ']?.select?.options?.map(opt => opt.name) || [];
                 const departments = properties['部門']?.multi_select?.options?.map(opt => opt.name) || [];
 
-                // データベースURLからデータソースIDを取得
                 const match = database.url.match(/notion\.so\/([a-f0-9]+)\/([a-f0-9]+)/);
                 const dataSourceIdFromUrl = match ? match[1] : null;
 
@@ -104,7 +100,7 @@ module.exports = async (req, res) => {
             }
 
             // ---------------------------------------------
-            // A-2. Toggl計測開始 (startTogglTracking) - ★修正反映箇所★
+            // A-2. Toggl計測開始 (startTogglTracking) 
             // ---------------------------------------------
             else if (customEndpoint === 'startTogglTracking') {
                 
@@ -126,9 +122,8 @@ module.exports = async (req, res) => {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        // Toggl API v9 は time_entry オブジェクトでラップする必要がない
                         description: description,
-                        workspace_id: parseInt(workspaceId, 10), // V9ではIDを数値型で送る
+                        workspace_id: parseInt(workspaceId, 10),
                         created_with: 'NotionTogglTimerApp',
                         start: new Date().toISOString(),
                         duration: -1 // 計測中を示す
@@ -146,7 +141,7 @@ module.exports = async (req, res) => {
             }
             
             // ---------------------------------------------
-            // A-3. KPIデータ取得 (getKpi) - ※30日フィルターは適用せず、オリジナルロジック維持
+            // A-3. KPIデータ取得 (getKpi)
             // ---------------------------------------------
             else if (customEndpoint === 'getKpi') {
                 if (!dataSourceId) {
@@ -159,7 +154,7 @@ module.exports = async (req, res) => {
                 const now = new Date();
                 const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)).toISOString().split('T')[0];
                 
-                // 【警告】このロジックはパフォーマンス上の問題を抱えています（全完了タスクを取得後、JSでフィルタリングするため）
+                // 完了タスクを取得 (30日フィルターは適用せず、全件取得)
                 const response = await notion.databases.query({
                     database_id: databaseId,
                     filter: {
@@ -175,7 +170,6 @@ module.exports = async (req, res) => {
                 const oneWeekAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
                 
                 response.results.forEach(page => {
-                    // TODO: 実際のDBの「時間」プロパティ名に合わせて修正が必要
                     const timeProperty = '時間'; 
                     const timeProp = page.properties[timeProperty]?.formula?.number; 
                     const completedDate = page.properties['完了日']?.date?.start;
@@ -183,11 +177,6 @@ module.exports = async (req, res) => {
 
                     if (timeProp) {
                         const mins = Math.round(timeProp * 60); 
-                        
-                        // 月間集計 (30日以内に絞らず全件加算しているが、クライアント側で30日間のデータが必要な場合は要修正)
-                        // ここでは、一旦、すべての完了タスクの時間を加算します。
-                        // このロジックは意図が不明瞭なため、クライアント側のKPI表示と整合性を取る必要があります。
-                        // totalMonthMins += mins; 
                         
                         // 週間集計
                         if (completedDate && new Date(completedDate) >= oneWeekAgo) {
@@ -198,7 +187,7 @@ module.exports = async (req, res) => {
                         }
                     }
                     
-                    // 月間集計も日付フィルター（30日以内）を追加
+                    // 月間集計 (30日以内でフィルタリング)
                     if (completedDate && new Date(completedDate) >= new Date(thirtyDaysAgo)) {
                         const timeProp = page.properties[timeProperty]?.formula?.number;
                         if (timeProp) {
@@ -212,11 +201,15 @@ module.exports = async (req, res) => {
             }
             
             // ---------------------------------------------
-            // A-4. 未定義のエンドポイント
+            // A-4. 未定義のエンドポイント (デバッグ用コードを挿入)
             // ---------------------------------------------
             else {
-                // クライアントから startTogglTracking が来ても、このブロックには到達しません
-                return res.status(400).json({ message: 'Invalid custom endpoint.' });
+                console.error("Invalid custom endpoint received:", customEndpoint);
+                return res.status(400).json({ 
+                    message: 'Invalid custom endpoint.',
+                    // ★★★ デバッグ情報: 受け取った customEndpoint の値をそのまま返す ★★★
+                    received_endpoint: customEndpoint 
+                });
             }
         }
 
@@ -232,13 +225,11 @@ module.exports = async (req, res) => {
             if (isNotion) {
                 authHeader = `Bearer ${tokenValue}`;
             } else if (isToggl) {
-                // TogglはBasic認証 (トークン:api_token)
-                authHeader = 'Basic ' + Buffer.from(`${tokenValue}:api_token').toString('base64');
+                authHeader = 'Basic ' + Buffer.from(`${tokenValue}:api_token`).toString('base64');
             } else {
                 return res.status(400).json({ message: 'Invalid token key.' });
             }
 
-            // Notion/Toggl APIバージョンヘッダー
             const notionVersion = '2022-06-28'; 
             
             const fetchOptions = {
@@ -261,7 +252,6 @@ module.exports = async (req, res) => {
             
             const responseBody = await response.text();
             
-            // Notion/Togglからの応答をそのまま返す
             res.status(response.status).send(responseBody);
             
         } 
