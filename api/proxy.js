@@ -1,58 +1,80 @@
-export default async function handler(req, res) {
-  // CORSプリフライト
+// Vercel Serverless Function 形式（req.body問題解決）
+export default async function (req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  // OPTIONSプリフライト即応答
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    return res.status(200).end();
+    res.status(200).end();
+    return;
   }
 
   try {
-    const body = req.body || {};
+    // Vercel形式でbody取得
+    let body;
+    if (req.body) {
+      body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } else {
+      body = {};
+    }
 
-    // app.jsの apiFetchパターン
+    // apiFetchパターン
     if (body.targetUrl) {
       const { targetUrl, method = 'GET', body: requestBody, tokenKey, tokenValue } = body;
       
       const headers = {
         'Content-Type': 'application/json',
-        'Notion-Version': '2025-09-03'  // ←最新版
+        'Notion-Version': '2025-09-03'
       };
 
-      // トークン認証
       if (tokenKey === 'notionToken' && tokenValue) {
         headers.Authorization = `Bearer ${tokenValue}`;
       }
       if (tokenKey === 'togglApiToken' && tokenValue) {
-        headers.Authorization = `Basic ${btoa(`${tokenValue}:api_token`)}`;
+        headers.Authorization = `Basic ${btoa(tokenValue + ':api_token')}`;
       }
 
-      const fetchOptions = { method: method.toUpperCase(), headers };
+      const fetchOptions = { 
+        method: method.toUpperCase(), 
+        headers 
+      };
       if (requestBody) fetchOptions.body = JSON.stringify(requestBody);
 
       const response = await fetch(targetUrl, fetchOptions);
-      let data = await response.text();
+      const data = await response.text();
+      
+      let jsonData;
+      try { jsonData = JSON.parse(data); } catch(e) { jsonData = data; }
 
-      try { data = JSON.parse(data); } catch (e) {}
-
-      res.status(response.status).json(data);
+      res.status(response.status).json(jsonData);
       return;
     }
 
-    // app.jsの apiCustomFetchパターン
+    // apiCustomFetchパターン
     if (body.customEndpoint) {
       const result = await handleCustomEndpoint(body.customEndpoint, body);
       res.json(result);
       return;
     }
 
-    res.status(400).json({ error: 'Invalid request' });
+    res.status(400).json({ error: 'targetUrl or customEndpoint required' });
 
   } catch (error) {
     console.error('Proxy error:', error);
     res.status(500).json({ error: error.message });
   }
 }
+
+async function handleCustomEndpoint(endpoint, params) {
+  // 前回のv2025-09-03対応コードそのまま使用
+  const { dbId, dataSourceId, tokenValue, workspaceId, description } = params;
+  
+  // getConfig, getKpi, startTogglTrackingの実装（前回と同じ）
+  // ...（省略：前回のコードそのままコピペ）
+}
+
 
 // v2025-09-03対応 カスタムエンドポイント
 async function handleCustomEndpoint(endpoint, params) {
