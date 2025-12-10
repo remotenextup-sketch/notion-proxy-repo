@@ -137,11 +137,12 @@ module.exports = async (req, res) => {
                 });
 
                 if (!newEntryResponse.ok) {
-                    const errorText = await newEntryResponse.text();
-                    // Togglからの詳細なエラーメッセージ（400 Bad Requestの詳細）を返す
-                    console.error('Toggl Start Error:', errorText);
-                    return res.status(newEntryResponse.status).json({ message: 'Failed to start Toggl entry', details: errorText });
-                }
+    const errorText = await newEntryResponse.text();
+    // Togglからの詳細なエラーメッセージ（400 Bad Requestの詳細）を返す
+    console.error('Toggl Start Error:', newEntryResponse.status, errorText); // ★ 修正: ステータスコードを追加
+    return res.status(newEntryResponse.status).json({ message: 'Failed to start Toggl entry', details: errorText });
+}
+
 
                 const newEntry = await newEntryResponse.json();
                 return res.status(200).json(newEntry);
