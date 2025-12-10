@@ -64,8 +64,8 @@ module.exports = async (req, res) => {
 
     // リクエストボディのパース
     const { 
-        targetUrl, method, body, tokenKey, tokenValue, // Notion/Toggl直接呼び出し用
-        customEndpoint, dbId, dataSourceId, workspaceId, description // カスタムエンドポイント用に追加
+        targetUrl, method, body, tokenKey, tokenValue,
+        customEndpoint, dbId, dataSourceId, workspaceId, description
     } = req.body;
 
     // トークンが提供されていない場合のエラーハンドリング
@@ -75,7 +75,7 @@ module.exports = async (req, res) => {
 
     try {
         // ===============================================
-        // A. カスタムエンドポイントの処理 (getConfig, getKpi, startTogglTracking)
+        // A. カスタムエンドポイントの処理
         // ===============================================
         if (customEndpoint) {
             
@@ -108,13 +108,19 @@ module.exports = async (req, res) => {
                     return res.status(400).json({ message: 'Toggl parameters missing (workspaceId or description).' });
                 }
 
-                // 1. 既存の計測を停止 (Toggl APIトークンは tokenValue で渡される)
+                // 1. 既存の計測を停止 
                 await stopRunningTogglEntry(tokenValue); 
 
                 // 2. 新しいタイムエントリーを開始
                 const authHeader = 'Basic ' + Buffer.from(`${tokenValue}:api_token`).toString('base64');
                 const startEntryUrl = 'https://api.track.toggl.com/api/v9/time_entries';
                 
+                // ★★★ 修正ポイント: workspaceIdを必ず数値に変換する ★★★
+                const numericWorkspaceId = parseInt(workspaceId, 10);
+                if (isNaN(numericWorkspaceId)) {
+                    return res.status(400).json({ message: 'Invalid workspaceId format.' });
+                }
+
                 const newEntryResponse = await fetch(startEntryUrl, {
                     method: 'POST',
                     headers: {
@@ -123,17 +129,18 @@ module.exports = async (req, res) => {
                     },
                     body: JSON.stringify({
                         description: description,
-                        workspace_id: parseInt(workspaceId, 10),
+                        workspace_id: numericWorkspaceId, // 変換済みの数値を使用
                         created_with: 'NotionTogglTimerApp',
                         start: new Date().toISOString(),
-                        duration: -1 // 計測中を示す
+                        duration: -1
                     })
                 });
 
                 if (!newEntryResponse.ok) {
-                    const errorBody = await newEntryResponse.json();
-                    console.error('Toggl Start Error:', errorBody);
-                    return res.status(newEntryResponse.status).json({ message: 'Failed to start Toggl entry', details: errorBody });
+                    const errorText = await newEntryResponse.text();
+                    // Togglからの詳細なエラーメッセージ（400 Bad Requestの詳細）を返す
+                    console.error('Toggl Start Error:', errorText);
+                    return res.status(newEntryResponse.status).json({ message: 'Failed to start Toggl entry', details: errorText });
                 }
 
                 const newEntry = await newEntryResponse.json();
@@ -201,15 +208,10 @@ module.exports = async (req, res) => {
             }
             
             // ---------------------------------------------
-            // A-4. 未定義のエンドポイント (デバッグ用コードを挿入)
+            // A-4. 未定義のエンドポイント
             // ---------------------------------------------
             else {
-                console.error("Invalid custom endpoint received:", customEndpoint);
-                return res.status(400).json({ 
-                    message: 'Invalid custom endpoint.',
-                    // ★★★ デバッグ情報: 受け取った customEndpoint の値をそのまま返す ★★★
-                    received_endpoint: customEndpoint 
-                });
+                return res.status(400).json({ message: 'Invalid custom endpoint.' });
             }
         }
 
