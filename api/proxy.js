@@ -19,19 +19,13 @@ function getAuthHeaders(tokenKey, tokenValue) {
     return headers;
 }
 
-
-// =========================================================================
-// 新規追加関数: database_id から data_source_id を取得し、DBメタデータと統合する
-// =========================================================================
-
 /**
  * ユーザーが入力した database_id から、必要な data_source_id および DB設定を取得する
- * (API v2025-09-03 以降の必須のディスカバリーステップ)
  */
 async function getConfigAndDataSourceId(dbId, tokenValue) {
     const headers = getAuthHeaders('notionToken', tokenValue);
     
-    // 1. database_id から data_sources のリストを取得
+    // 1. database_id から data_sources のリストを取得 (v2025-09-03対応)
     let res = await fetch(`https://api.notion.com/v1/databases/${dbId}`, {
         method: 'GET',
         headers: headers,
@@ -44,12 +38,10 @@ async function getConfigAndDataSourceId(dbId, tokenValue) {
     
     const dbData = await res.json();
     
-    // data_sources が存在しないか、空の場合はエラー
     if (!dbData.data_sources || dbData.data_sources.length === 0) {
-        throw new Error('Notion DBのデータソースが見つかりません。データベースが正しく設定されているか確認してください。');
+        throw new Error('Notion DBのデータソースが見つかりません。統合がデータベースに追加されているか確認してください。');
     }
 
-    // 最初の data_source_id を使用（シンプル統合の前提）
     const dataSourceId = dbData.data_sources[0].id;
 
     // 2. data_source_id を使って、データソースのプロパティ（メタデータ）を取得
@@ -83,21 +75,17 @@ async function getConfigAndDataSourceId(dbId, tokenValue) {
         config.departments = departmentProp.multi_select.options.map(o => o.name);
     }
     
-    // data_source_id と設定をまとめて返す
     return config;
 }
 
-// =========================================================================
-// 既存の関数を data_source_id を使うように修正
-// =========================================================================
-
 /**
  * Notionから過去の計測ログを取得し、KPIを計算する
- * (API v2025-09-03: /v1/databases/:dbId/query から /v1/data_sources/:dsId/query に変更)
+ * (API v2025-09-03: /v1/data_sources/:dsId/query を使用)
  */
-async function getKpi(dataSourceId, tokenValue) { // 引数を dbId から dataSourceId に変更
+async function getKpi(dataSourceId, tokenValue) {
     const headers = getAuthHeaders('notionToken', tokenValue);
     
+    // 今週、今月の開始日の計算ロジック（省略）
     const today = new Date();
     const dayOfWeek = today.getDay(); 
     const diffToSunday = dayOfWeek;
@@ -119,15 +107,12 @@ async function getKpi(dataSourceId, tokenValue) { // 引数を dbId から dataS
         ]
     };
     
-    // ★ 修正点: エンドポイントを /v1/data_sources/:dataSourceId/query に変更
     const res = await fetch(`https://api.notion.com/v1/data_sources/${dataSourceId}/query`, {
         method: 'POST',
         headers: headers,
         body: JSON.stringify({ filter: filter })
     });
     
-    // ... (以下のKPI計算ロジックは変更なし)
-
     if (!res.ok) {
         const errorBody = await res.json().catch(() => ({}));
         throw new Error(`Notion ログ取得エラー (${res.status}): ${errorBody.code || '不明なエラー'}`);
@@ -140,6 +125,7 @@ async function getKpi(dataSourceId, tokenValue) { // 引数を dbId から dataS
     const categoryWeekMins = {};
     
     data.results.forEach(p => {
+        // プロパティ名が合致しているか再確認
         const mins = p.properties['計測時間(分)']?.number || 0;
         const completeDateStr = p.properties['完了日']?.date?.start;
         const category = p.properties['カテゴリ']?.select?.name;
@@ -164,11 +150,7 @@ async function getKpi(dataSourceId, tokenValue) { // 引数を dbId から dataS
     };
 }
 
-
-// =========================================================================
-// メインハンドラ (module.exports)
-// =========================================================================
-
+// メインのプロキシハンドラ
 module.exports = async (req, res) => {
     
     // CORS/OPTIONS処理 (変更なし)
@@ -179,31 +161,24 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
-
-    if (req.method !== 'POST') {
-        // ★ 修正点: POST以外にもPATCH(Notion)やGET(Toggl)を許可するように修正
-        // ただし、アプリ側はPOSTで統一しているので、ここではPOST以外は許可しない
-        return res.status(405).json({ message: 'Method Not Allowed.' });
-    }
     
+    // ★ 修正点: POST以外のメソッドチェックを削除 (TogglのGETやNotionのPATCHに対応するため)
+
     try {
         const { targetUrl, method, body, tokenKey, tokenValue, customEndpoint, dbId, dataSourceId } = req.body;
 
         // --- 1. カスタムエンドポイントの処理 ---
         if (customEndpoint) {
             
-            // ★ 修正点: getConfigAndDataSourceId を呼び出し
             if (customEndpoint === 'getConfig') {
                 if (!dbId || !tokenValue) throw new Error('Missing dbId or tokenValue for custom endpoint.');
-                // database_id から data_source_id を取得し、設定を返す
                 const result = await getConfigAndDataSourceId(dbId, tokenValue);
                 return res.status(200).json(result);
             } 
             
-            // ★ 修正点: getKpi を dataSourceId で呼び出し
             else if (customEndpoint === 'getKpi') {
+                // ★ 修正点: dataSourceId の存在チェック
                 if (!dataSourceId || !tokenValue) throw new Error('Missing dataSourceId or tokenValue for custom endpoint.');
-                // data_source_id を使って KPI を計算
                 const result = await getKpi(dataSourceId, tokenValue);
                 return res.status(200).json(result);
             } else {
